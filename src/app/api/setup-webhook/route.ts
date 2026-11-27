@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createWebhook, listWebhooks } from "@/services/clickup";
+import { createWebhook, listWebhooks, updateWebhook } from "@/services/clickup";
 
 export async function GET(request: Request) {
   const teamId = new URL(request.url).searchParams.get("teamId") || process.env.CLICKUP_TEAM_ID;
@@ -22,7 +22,13 @@ export async function POST(request: Request) {
     }
     const existing = await listWebhooks(teamId);
     const duplicate = existing.find((webhook) => webhook.endpoint === endpoint && webhook.events.includes("taskCreated"));
-    if (duplicate) return NextResponse.json({ webhook: duplicate, alreadyExists: true });
+    if (duplicate) {
+      if (duplicate.events.includes("taskUpdated")) {
+        return NextResponse.json({ webhook: duplicate, alreadyExists: true });
+      }
+      const webhook = await updateWebhook(duplicate, endpoint);
+      return NextResponse.json({ webhook, alreadyExists: true, updated: true });
+    }
     const webhook = await createWebhook(teamId, endpoint);
     return NextResponse.json({ webhook }, { status: 201 });
   } catch (error) {

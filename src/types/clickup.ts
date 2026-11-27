@@ -1,8 +1,9 @@
 export interface ClickUpCustomFieldOption {
   id: string;
-  name: string;
+  name?: string;
+  label?: string;
   color?: string | null;
-  orderindex?: number;
+  orderindex?: number | string;
 }
 
 export interface ClickUpCustomField {
@@ -30,7 +31,7 @@ export interface ClickUpWebhookEvent {
   event: string;
   task_id?: string;
   webhook_id?: string;
-  history_items?: Array<{ id?: string; type?: number; date?: string; field?: { id?: string; name?: string }; [key: string]: unknown }>;
+  history_items?: Array<{ id?: string; type?: number; date?: string; field?: string; [key: string]: unknown }>;
   [key: string]: unknown;
 }
 

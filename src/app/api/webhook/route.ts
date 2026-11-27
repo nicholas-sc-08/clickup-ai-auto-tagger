@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import type { ClickUpWebhookEvent } from "@/types/clickup";
-import { updateCustomField, getTaskDetails } from "@/services/clickup";
+import { updateCustomField, getTaskDetails, getTicketFieldOptions } from "@/services/clickup";
 import { classifyTicket } from "@/services/aiClassifier";
 
 export const runtime = "nodejs";
@@ -27,18 +27,25 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON payload." }, { status: 400 });
   }
-  if (event.event !== "taskCreated") return NextResponse.json({ received: true, ignored: true });
+  const updatesTicketText = event.event === "taskUpdated" && event.history_items?.some((item) => {
+    const changedField = item.field?.toLowerCase();
+    return changedField === "content" || changedField === "description" || changedField === "name" || changedField === "title";
+  });
+  if (event.event !== "taskCreated" && !updatesTicketText) {
+    return NextResponse.json({ received: true, ignored: true });
+  }
   if (!event.task_id) return NextResponse.json({ error: "Missing task_id." }, { status: 400 });
 
   try {
     const task = await getTaskDetails(event.task_id);
-    const classification = await classifyTicket(task.name, task.description ?? task.text_content ?? "");
+    const options = await getTicketFieldOptions(task.custom_fields ?? []);
+    const classification = await classifyTicket(task.name, task.description ?? task.text_content ?? "", options);
     const updates: Promise<void>[] = [];
-    if (classification.product && process.env.CLICKUP_PRODUCT_FIELD_ID) {
-      updates.push(updateCustomField(task.id, process.env.CLICKUP_PRODUCT_FIELD_ID, classification.product));
+    if (classification.productOptionId && process.env.CLICKUP_PRODUCT_FIELD_ID) {
+      updates.push(updateCustomField(task.id, process.env.CLICKUP_PRODUCT_FIELD_ID, classification.productOptionId, "labels"));
     }
-    if (classification.client && process.env.CLICKUP_CLIENT_FIELD_ID) {
-      updates.push(updateCustomField(task.id, process.env.CLICKUP_CLIENT_FIELD_ID, classification.client));
+    if (classification.clientOptionId && process.env.CLICKUP_CLIENT_FIELD_ID) {
+      updates.push(updateCustomField(task.id, process.env.CLICKUP_CLIENT_FIELD_ID, classification.clientOptionId, "drop_down"));
     }
     await Promise.all(updates);
     return NextResponse.json({ received: true, taskId: task.id, classification });

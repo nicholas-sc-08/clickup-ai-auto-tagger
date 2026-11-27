@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { motion } from "framer-motion";
-import { Activity, ArrowDownRight, ArrowUpRight, Bot, Check, ChevronDown, CircleHelp, Clock3, Command, ExternalLink, GitBranch, Layers3, LoaderCircle, Plus, Radar, Settings2, ShieldCheck, Sparkles, Webhook, Zap } from "lucide-react";
+import { Activity, ArrowDownRight, ArrowUpRight, Bot, Check, ChevronDown, CircleHelp, Clock3, Command, Copy, ExternalLink, GitBranch, Layers3, LoaderCircle, Plus, Radar, Settings2, ShieldCheck, Sparkles, Webhook, Zap } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { useToast } from "@/components/ui/Toast";
 
 interface Classification { client: string | null; product: string | null; confidence: number }
 interface Health { clickup: boolean; gemini: boolean }
 interface Webhook { id: string; endpoint: string; events: string[]; secret?: string; health?: { status: string } }
+interface CustomField { id: string; name: string; type: string }
 
 const examples = [
   { title: "Checkout crashes after promo code", description: "When a customer applies a discount code during checkout, the page returns a 500 error. This affects the Northstar storefront running on Shopify." },
@@ -30,6 +31,9 @@ export default function Dashboard() {
   const [webhooks, setWebhooks] = useState<Webhook[]>([]);
   const [loadingWebhooks, setLoadingWebhooks] = useState(false);
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [listId, setListId] = useState("900700253157");
+  const [fields, setFields] = useState<CustomField[]>([]);
+  const [fieldsLoading, setFieldsLoading] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const response = await fetch("/api/health"); setHealth(await response.json() as Health); }
@@ -67,14 +71,46 @@ export default function Dashboard() {
     event.preventDefault(); setRegistering(true);
     try {
       const response = await fetch("/api/setup-webhook", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ teamId, endpoint }) });
-      const data = await response.json() as { webhook?: Webhook; alreadyExists?: boolean; error?: string };
+      const data = await response.json() as { webhook?: Webhook; alreadyExists?: boolean; updated?: boolean; error?: string };
       if (!response.ok || !data.webhook) throw new Error(data.error ?? "Could not register webhook.");
-      toast(data.alreadyExists ? "Webhook already registered" : "Webhook registered", data.webhook.endpoint);
+      toast(data.updated ? "Webhook updated" : data.alreadyExists ? "Webhook already registered" : "Webhook registered", data.webhook.endpoint);
       setWebhookSecret(data.webhook.secret ?? "");
       setWebhooks((current) => current.some((item) => item.id === data.webhook!.id) ? current : [data.webhook!, ...current]);
       if (!data.webhook.secret) setWebhookOpen(false);
     } catch (error) { toast("Registration failed", error instanceof Error ? error.message : "Check your ClickUp settings.", "error"); }
     finally { setRegistering(false); }
+  }
+
+  async function fetchFields(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const requestedListId = listId.trim();
+    if (!/^\d+$/.test(requestedListId)) {
+      toast("Invalid list ID", "Enter a numeric ClickUp list ID.", "error");
+      return;
+    }
+
+    setFieldsLoading(true);
+    setFields([]);
+    try {
+      const response = await fetch(`/api/fields?listId=${encodeURIComponent(requestedListId)}`);
+      const data = await response.json() as { fields?: CustomField[]; error?: string };
+      if (!response.ok || !data.fields) throw new Error(data.error ?? "Could not fetch custom fields.");
+      setFields(data.fields);
+      if (data.fields.length === 0) toast("No custom fields found", `No fields are available for list ${requestedListId}.`, "info");
+    } catch (error) {
+      toast("Could not fetch fields", error instanceof Error ? error.message : "Check your ClickUp token and list ID.", "error");
+    } finally {
+      setFieldsLoading(false);
+    }
+  }
+
+  async function copyFieldId(field: CustomField) {
+    try {
+      await navigator.clipboard.writeText(field.id);
+      toast("Field ID copied", `${field.name} · ${field.id}`);
+    } catch {
+      toast("Could not copy field ID", "Your browser blocked clipboard access.", "error");
+    }
   }
 
   function chooseExample(index: number) { setTitle(examples[index].title); setDescription(examples[index].description); setClassification(null); }
@@ -111,6 +147,20 @@ export default function Dashboard() {
           </div>
         </section>
 
+        <section className="section-block custom-fields-section" aria-labelledby="custom-fields-title">
+          <div className="section-heading"><div><h2 id="custom-fields-title">Custom Fields Lookup</h2><p>Find field IDs available in a ClickUp list.</p></div></div>
+          <div className="card fields-card">
+            <form className="fields-search-form" onSubmit={fetchFields}>
+              <label className="fields-list-label" htmlFor="fields-list-id">List ID</label>
+              <input id="fields-list-id" className="text-input" inputMode="numeric" pattern="[0-9]+" value={listId} onChange={(event) => setListId(event.target.value)} aria-label="ClickUp list ID" />
+              <button className="button button-primary" type="submit" disabled={fieldsLoading || !listId.trim()}>{fieldsLoading ? <><LoaderCircle size={15} className="spin" /> Fetching…</> : <><Radar size={15} /> Fetch fields</>}</button>
+            </form>
+            {fieldsLoading && <div className="field-skeleton-list" aria-label="Loading custom fields"><div className="skeleton field-skeleton-row" /><div className="skeleton field-skeleton-row" /><div className="skeleton field-skeleton-row" /></div>}
+            {!fieldsLoading && fields.length > 0 && <div className="fields-results" aria-live="polite"><div className="fields-results-heading"><span>{fields.length} {fields.length === 1 ? "field" : "fields"} found</span><span>List {listId}</span></div>{fields.map((field) => <div className="custom-field-row" key={field.id}><div className="custom-field-name"><strong>{field.name}</strong><code>{field.id}</code></div><span className="custom-field-type">{field.type}</span><button className="button button-secondary copy-field-button" type="button" onClick={() => void copyFieldId(field)}><Copy size={13} /> Copy ID</button></div>)}</div>}
+            {!fieldsLoading && fields.length === 0 && <div className="fields-empty">Enter a list ID and fetch its custom fields to see their names and types.</div>}
+          </div>
+        </section>
+
         <section className="section-block playground-section" id="playground"><div className="section-heading"><div><div className="heading-with-icon"><div className="heading-icon"><Sparkles size={15} /></div><h2>AI playground</h2><span className="beta-tag">BETA</span></div><p>Try a sample ticket and see how Gemini categorizes it.</p></div><button className="examples-menu" onClick={() => chooseExample(Math.floor(Math.random() * examples.length))}>Load an example <ChevronDown size={13} /></button></div>
           <div className="card playground-card"><form onSubmit={runClassification} className="playground-form"><div className="field-label-row"><label htmlFor="ticket-title">Ticket title</label><span>Required</span></div><input id="ticket-title" className="text-input" placeholder="e.g. Checkout fails when applying discount code" value={title} onChange={(event) => setTitle(event.target.value)} maxLength={240} /><div className="field-label-row description-label"><label htmlFor="ticket-description">Description</label><span>Optional</span></div><textarea id="ticket-description" className="text-input description-input" placeholder="Add a few details about the issue, customer, or product..." value={description} onChange={(event) => setDescription(event.target.value)} rows={4} maxLength={5000} /><div className="form-footer"><span className="privacy-note"><ShieldCheck size={13} /> Sent to Gemini for classification</span><button className="button button-primary" type="submit" disabled={classifying || !title.trim()}>{classifying ? <><LoaderCircle size={15} className="spin" /> Analyzing…</> : <><Sparkles size={15} /> Classify ticket <span className="button-shortcut">↵</span></>}</button></div></form>
             {classifying && <div className="result-skeleton"><div className="skeleton skeleton-line" /><div className="skeleton-pills"><div className="skeleton skeleton-pill" /><div className="skeleton skeleton-pill" /><div className="skeleton skeleton-pill short" /></div></div>}
@@ -127,7 +177,7 @@ export default function Dashboard() {
 
     <Modal open={webhookOpen} onClose={() => { setWebhookOpen(false); setWebhookSecret(""); }} title={webhookSecret ? "Save your webhook secret" : "Connect a ClickUp webhook"} description={webhookSecret ? "ClickUp returned this signing secret. Add it to your server environment to accept webhook events." : "Send new ClickUp tasks to Signal for automatic AI categorization."} className="webhook-modal">
       {webhookSecret ? <div className="secret-panel"><div className="secret-warning"><ShieldCheck size={16} /><span>Copy this value into <code>CLICKUP_WEBHOOK_SECRET</code>, then restart your server. This secret is only shown once by ClickUp.</span></div><textarea className="text-input secret-input" readOnly value={webhookSecret} onFocus={(event) => event.currentTarget.select()} aria-label="ClickUp webhook signing secret" /><div className="modal-actions"><button className="button button-secondary" onClick={async () => { await navigator.clipboard.writeText(webhookSecret); toast("Secret copied", "Paste it into your server environment variables."); }}>Copy secret</button><button className="button button-primary" onClick={() => { setWebhookOpen(false); setWebhookSecret(""); }}>Done</button></div></div> : <>
-      <form className="webhook-form" onSubmit={registerWebhook}><label className="modal-field"><span>ClickUp workspace ID</span><input className="text-input" value={teamId} onChange={(event) => setTeamId(event.target.value)} placeholder="e.g. 1234567" required /></label><label className="modal-field"><span>Public webhook URL</span><input className="text-input" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="https://your-domain.com/api/webhook" type="url" required /></label><div className="modal-callout"><ShieldCheck size={16} /><p>Use an HTTPS URL accessible by ClickUp. For local development, expose port 3000 with ngrok and use its forwarding URL.</p></div><div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => { void loadWebhooks(); }}> {loadingWebhooks ? <LoaderCircle size={14} className="spin" /> : <Activity size={14} />} Check existing</button><button className="button button-primary" type="submit" disabled={registering}>{registering ? <><LoaderCircle size={15} className="spin" /> Registering…</> : <><Webhook size={15} /> Register webhook</>}</button></div></form>
+      <form className="webhook-form" onSubmit={registerWebhook}><label className="modal-field"><span>ClickUp workspace ID</span><input className="text-input" value={teamId} onChange={(event) => setTeamId(event.target.value)} placeholder="e.g. 1234567" required /></label><label className="modal-field"><span>Public webhook URL</span><input className="text-input" value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="https://your-domain.com/api/webhook" type="url" required /></label><div className="modal-callout"><ShieldCheck size={16} /><p>Use an HTTPS URL accessible by ClickUp. For local development, expose port 3001 and use the current forwarding URL. The webhook listens for task creation and title or description updates.</p></div><div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => { void loadWebhooks(); }}> {loadingWebhooks ? <LoaderCircle size={14} className="spin" /> : <Activity size={14} />} Check existing</button><button className="button button-primary" type="submit" disabled={registering}>{registering ? <><LoaderCircle size={15} className="spin" /> Registering…</> : <><Webhook size={15} /> Register webhook</>}</button></div></form>
       {webhooks.length > 0 && <div className="modal-webhooks"><div className="modal-webhooks-label">ACTIVE WEBHOOKS ({webhooks.length})</div>{webhooks.slice(0, 3).map((item) => <div key={item.id} className="modal-webhook-item"><span className="tiny-status online" />{item.endpoint}</div>)}</div>}
       </>}
     </Modal>
